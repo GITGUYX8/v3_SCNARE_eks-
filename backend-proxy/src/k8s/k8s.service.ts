@@ -5,14 +5,14 @@ import * as k8s from '@kubernetes/client-node';
 export class K8sService {
   private readonly logger = new Logger(K8sService.name);
   private k8sApi: k8s.CoreV1Api;
-
+  private netApi: k8s.NetworkingV1Api; // <-- Add this) 
   constructor() {
     const kc = new k8s.KubeConfig();
-    //  loads your local ~/.kube/config when testing on locally with minikube or kind,
-    // but automatically switches to internal cluster credentials when deployed to AWS
     kc.loadFromDefault(); 
     this.k8sApi = kc.makeApiClient(k8s.CoreV1Api);
-  }
+    this.netApi = kc.makeApiClient(k8s.NetworkingV1Api); // <-- Add this
+    }
+  
 
   async provisionStudentLab(studentId: string) {
     const namespaceName = `lab-${studentId.toLowerCase()}`;
@@ -25,6 +25,54 @@ export class K8sService {
             metadata: { name: namespaceName }
             }
         });
+    const serviceManifest: k8s.V1Service = {
+        apiVersion: 'v1',
+        kind: 'Service',
+        metadata: { name: 'ros2-service' },
+        spec: {
+          selector: { app: 'ros2-student-lab', student: studentId }, // Connects to the Pod's labels
+          ports: [
+            { name: 'gui', port: 6090, targetPort: 6090 },
+            { name: 'terminal', port: 8080, targetPort: 8080 }
+          ],
+        },
+      };
+      await this.k8sApi.createNamespacedService({ 
+        namespace: namespaceName, 
+        body: serviceManifest 
+      });
+
+      // 5. CREATE INGRESS: Tell Nginx to route /studentId/gui to the Service
+      const ingressManifest: k8s.V1Ingress = {
+        apiVersion: 'networking.k8s.io/v1',
+        kind: 'Ingress',
+        metadata: {
+          name: 'ros2-ingress',
+          annotations: {
+            // This tells Nginx to strip the /yash-001/gui part from the URL 
+            // before sending it to the container, so the container just sees "/"
+            'nginx.ingress.kubernetes.io/rewrite-target': '/$2'
+          }
+        },
+        spec: {
+          ingressClassName: 'nginx',
+          rules: [{
+            http: {
+              paths: [{
+                path: `/${studentId.toLowerCase()}/gui(/|$)(.*)`,
+                pathType: 'Prefix',
+                backend: {
+                  service: { name: 'ros2-service', port: { number: 6090 } }
+                }
+              }]
+            }
+          }]
+        }
+      };
+      await this.netApi.createNamespacedIngress({ 
+        namespace: namespaceName, 
+        body: ingressManifest 
+      });
 
       // BLUEPRINT: Pod with strict security and timeouts
       const podManifest: k8s.V1Pod = {
@@ -40,7 +88,8 @@ export class K8sService {
           containers: [
             {
               name: 'rviz2-container',
-              image: 'YOUR_ECR_URI/nano-ros:latest', // We will swap this later
+              image: 'nano-ros:latest', // We will build this locally next
+              imagePullPolicy: 'IfNotPresent', // CRITICAL: Tells K8s to use your local cache
               ports: [{ containerPort: 6090 }, { containerPort: 8080 }],
               // RESOURCE QUOTAS: Prevent the "Noisy Neighbor" crash
               resources: {
