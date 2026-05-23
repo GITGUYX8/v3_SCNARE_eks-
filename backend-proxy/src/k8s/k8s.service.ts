@@ -21,8 +21,10 @@ export class K8sService {
     try {
       // 1. ISOLATION: Create a dedicated Namespace for this student
       await this.k8sApi.createNamespace({
-        metadata: { name: namespaceName },
-      });
+        body: {
+            metadata: { name: namespaceName }
+            }
+        });
 
       // BLUEPRINT: Pod with strict security and timeouts
       const podManifest: k8s.V1Pod = {
@@ -59,7 +61,7 @@ export class K8sService {
       };
 
       // EXECUTION: Send the command to Kubernetes
-      await this.k8sApi.createNamespacedPod(namespaceName, podManifest);
+      await this.k8sApi.createNamespacedPod({namespace : namespaceName, body : podManifest});
 
       this.logger.log(`Successfully launched pod for ${studentId}`);
 
@@ -80,7 +82,7 @@ export class K8sService {
     try {
       // Because we put everything in a Namespace, deleting the Namespace
       // automatically destroys the Pod, the Volumes, and the Network rules instantly.
-      await this.k8sApi.deleteNamespace(namespaceName);
+      await this.k8sApi.deleteNamespace({name : namespaceName});
       this.logger.log(`Terminated all resources for ${studentId}`);
       return { status: 'terminated' };
     } catch (error) {
