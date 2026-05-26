@@ -32,7 +32,7 @@ export class K8sService {
         spec: {
           selector: { app: 'ros2-student-lab', student: studentId }, // Connects to the Pod's labels
           ports: [
-            { name: 'gui', port: 6090, targetPort: 6090 },
+            { name: 'gui', port: 80, targetPort: 8080 },
             { name: 'terminal', port: 8080, targetPort: 8080 }
           ],
         },
@@ -41,28 +41,24 @@ export class K8sService {
         namespace: namespaceName, 
         body: serviceManifest 
       });
-
-      // 5. CREATE INGRESS: Tell Nginx to route /studentId/gui to the Service
+      
+// 5. CREATE INGRESS: Clean, simple prefix routing
       const ingressManifest: k8s.V1Ingress = {
         apiVersion: 'networking.k8s.io/v1',
         kind: 'Ingress',
         metadata: {
           name: 'ros2-ingress',
-          annotations: {
-            // This tells Nginx to strip the /yash-001/gui part from the URL 
-            // before sending it to the container, so the container just sees "/"
-            'nginx.ingress.kubernetes.io/rewrite-target': '/$2'
-          }
+          // We completely deleted the rewrite-target and regex annotations!
         },
         spec: {
           ingressClassName: 'nginx',
           rules: [{
             http: {
               paths: [{
-                path: `/${studentId.toLowerCase()}/gui(/|$)(.*)`,
+                path: `/${studentId.toLowerCase()}/gui`, // Clean path
                 pathType: 'Prefix',
                 backend: {
-                  service: { name: 'ros2-service', port: { number: 6090 } }
+                  service: { name: 'ros2-service', port: { number: 80 } }
                 }
               }]
             }
@@ -75,7 +71,7 @@ export class K8sService {
       });
 
       // BLUEPRINT: Pod with strict security and timeouts
-      const podManifest: k8s.V1Pod = {
+const podManifest: k8s.V1Pod = {
         apiVersion: 'v1',
         kind: 'Pod',
         metadata: {
@@ -83,26 +79,26 @@ export class K8sService {
           labels: { app: 'ros2-student-lab', student: studentId },
         },
         spec: {
-          // TIMEOUT: Hard kill the pod after exactly 4 hours (14400 seconds)
           activeDeadlineSeconds: 14400,
           containers: [
             {
               name: 'rviz2-container',
-              image: 'nano-ros:latest', // We will build this locally next
-              imagePullPolicy: 'IfNotPresent', // CRITICAL: Tells K8s to use your local cache
-              ports: [{ containerPort: 6090 }, { containerPort: 8080 }],
-              // RESOURCE QUOTAS: Prevent the "Noisy Neighbor" crash
+              image: 'nano-ros:latest',
+              imagePullPolicy: 'IfNotPresent',
+              
+              // --- THE FIX: Tell ttyd exactly where it is hosted! ---
+              command: ["ttyd"],
+              args: ["-b", `/${studentId.toLowerCase()}/gui`, "-p", "8080", "bash"],
+              // ------------------------------------------------------
+              
+              ports: [{ containerPort: 8080 }],
               resources: {
-                requests: { cpu: '500m', memory: '1Gi' }, // Minimum guaranteed
-                limits: { cpu: '1000m', memory: '2Gi' },  // Maximum allowed (Throttled here)
+                requests: { cpu: '500m', memory: '1Gi' },
+                limits: { cpu: '1000m', memory: '2Gi' },
               },
-
-              // SECURITY BASELINE: Prevent Container Escapes
               securityContext: {
                 allowPrivilegeEscalation: false,
-                runAsNonRoot: true,
-                runAsUser: 1000,
-                capabilities: { drop: ['ALL'] } // Drops all Linux kernel privileges
+                capabilities: { drop: ['ALL'] }
               },
             },
           ],
@@ -111,8 +107,11 @@ export class K8sService {
 
       // EXECUTION: Send the command to Kubernetes
       await this.k8sApi.createNamespacedPod({namespace : namespaceName, body : podManifest});
+      this.logger.log(`Successfully launched pod for ${studentId}. Waiting for Nginx routing table to sync...`);
 
-      this.logger.log(`Successfully launched pod for ${studentId}`);
+      // --- THE RACE CONDITION FIX ---
+      // Force the backend to wait 5 seconds so Nginx has time to open the routing gate
+      await new Promise(resolve => setTimeout(resolve, 5000));
 
       return {
         status: 'provisioning',

@@ -3,7 +3,8 @@ import { useState } from 'react';
 export default function App() {
   const [labState, setLabState] = useState<'IDLE' | 'PROVISIONING' | 'RUNNING'>('IDLE');
   const [labUrl, setLabUrl] = useState<string>('');
-
+  // ADD THIS LINE: A simple counter to trigger iframe reloads
+  const [terminalKey, setTerminalKey] = useState<number>(0);
   // Hardcoded for testing. Later, this comes from your actual login page!
   const studentId = 'yash-001'; 
 
@@ -101,19 +102,31 @@ export default function App() {
         <div style={{ padding: '20px', backgroundColor: '#d1fae5', borderRadius: '8px', border: '1px solid #10b981' }}>
           <h3 style={{ color: '#047857' }}>✅ Lab is Live!</h3>
           <p>Your isolated Kubernetes Pod is active.</p>
-          <p><strong>Internal Routing Path:</strong> {labUrl}</p>
           
-          {/* THE MAGIC WINDOW: This streams the local Kubernetes Ingress directly into the browser */}
+          {/* NEW: Flexbox container to put the URL and Refresh button side-by-side */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px' }}>
+            <p style={{ margin: 0 }}><strong>Path:</strong> {labUrl}</p>
+            
+            <button 
+              onClick={() => setTerminalKey(prev => prev + 1)}
+              style={{ padding: '6px 12px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' }}
+            >
+              🔄 Refresh Terminal
+            </button>
+          </div>
+          
+          {/* THE MAGIC WINDOW */}
           <iframe 
-            src={`http://localhost${labUrl}`} 
+            key={terminalKey} // <-- ADD THIS LINE: React will remount the iframe when this changes
+            src={`http://localhost${labUrl}/`} 
             width="100%" 
             height="600px" 
-            style={{ border: '2px solid #10b981', borderRadius: '8px', marginTop: '15px', backgroundColor: '#fff' }}
+            style={{ border: '2px solid #10b981', borderRadius: '8px', marginTop: '10px', backgroundColor: '#fff' }}
             title="ROS2 Workspace"
           />
 
           <button 
-            style={{ padding: '10px 20px', marginTop: '10px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', display: 'block' }}
+            style={{ padding: '10px 20px', marginTop: '15px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', display: 'block', width: '100%' }}
             onClick={handleStopLab}
           >
             ⏹️ End Lab (Destroy Hardware)
