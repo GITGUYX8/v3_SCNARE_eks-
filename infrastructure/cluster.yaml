@@ -2,17 +2,27 @@ apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
 
 metadata:
-  name: ros-production-cluster
-  region: ap-northeast-1 # Tokyo region
-  version: "1.29" # Stable K8s version
+  name: scnare-ros2-cluster
+  region: ap-northeast-1 # Tokyo Region
+  version: "1.30" # Stable K8s Version
 
-# We create a dedicated group of EC2 worker nodes
+# Configure the VPC limits so AWS doesn't throttle us
+vpc:
+  clusterEndpoints:
+    publicAccess:  true
+    privateAccess: true
+
+# The Server Fleet (Where your NestJS and Student Pods will run)
 managedNodeGroups:
-  - name: standard-workers
-    instanceType: t3.medium # 2 vCPU, 4GB RAM (Good baseline for ROS2)
+  - name: standard-nodes
+    instanceType: t3.medium
     minSize: 1
-    maxSize: 3 # It will automatically add more servers if lots of students join!
-    desiredCapacity: 1
+    maxSize: 3 # Autoscaling up to 3 nodes
+    desiredCapacity: 2
     volumeSize: 20
     ssh:
       allow: true
+    # Give the nodes IAM permission to pull images from ECR
+    iam:
+      withAddonPolicies:
+        imageBuilder: true

@@ -5,35 +5,36 @@ import * as k8s from '@kubernetes/client-node';
 export class K8sService {
   private readonly logger = new Logger(K8sService.name);
   private k8sApi: k8s.CoreV1Api;
-  private netApi: k8s.NetworkingV1Api; // <-- Add this) 
+  private netApi: k8s.NetworkingV1Api; 
+
   constructor() {
     const kc = new k8s.KubeConfig();
     kc.loadFromDefault(); 
     this.k8sApi = kc.makeApiClient(k8s.CoreV1Api);
-    this.netApi = kc.makeApiClient(k8s.NetworkingV1Api); // <-- Add this
-    }
-  
+    this.netApi = kc.makeApiClient(k8s.NetworkingV1Api); 
+  }
 
   async provisionStudentLab(studentId: string) {
     const namespaceName = `lab-${studentId.toLowerCase()}`;
     this.logger.log(`Provisioning secure lab for ${studentId} in namespace ${namespaceName}`);
 
     try {
-      // 1. ISOLATION: Create a dedicated Namespace for this student
+      // 1. ISOLATION: Create a dedicated Namespace
       await this.k8sApi.createNamespace({
-        body: {
-            metadata: { name: namespaceName }
-            }
-        });
-    const serviceManifest: k8s.V1Service = {
+        body: { metadata: { name: namespaceName } }
+      });
+
+      // 2. THE CLOUD HACK: AWS LoadBalancer
+      const serviceManifest: k8s.V1Service = {
         apiVersion: 'v1',
         kind: 'Service',
         metadata: { name: 'ros2-service' },
         spec: {
-          selector: { app: 'ros2-student-lab', student: studentId }, // Connects to the Pod's labels
+          type: 'ClusterIP', // <-- CHANGED: Tells AWS to create a public URL
+          selector: { app: 'ros2-student-lab', student: studentId }, 
           ports: [
-            { name: 'gui', port: 80, targetPort: 8080 },
-            { name: 'terminal', port: 8080, targetPort: 8080 }
+            { name: 'gui', port: 80, targetPort: 4180 }, // <-- CHANGED: Route to the Bouncer (outh-sidecar port) instead of the app port directly!
+            { name: 'terminal', port: 8080, targetPort: 8080 } 
           ],
         },
       };
@@ -41,21 +42,27 @@ export class K8sService {
         namespace: namespaceName, 
         body: serviceManifest 
       });
-      
-// 5. CREATE INGRESS: Clean, simple prefix routing
+      // 2. THE AWS ALB INGRESS (The Master Gateway)
       const ingressManifest: k8s.V1Ingress = {
         apiVersion: 'networking.k8s.io/v1',
         kind: 'Ingress',
         metadata: {
           name: 'ros2-ingress',
-          // We completely deleted the rewrite-target and regex annotations!
+          annotations: {
+            'alb.ingress.kubernetes.io/scheme': 'internet-facing',
+            'alb.ingress.kubernetes.io/target-type': 'ip',
+            // THIS IS THE MAGIC: Groups all students onto ONE load balancer!
+            'alb.ingress.kubernetes.io/group.name': 'ros2-master-gateway',
+            'alb.ingress.kubernetes.io/healthcheck-path': '/ping',
+            'alb.ingress.kubernetes.io/success-codes': '200',
+          }
         },
         spec: {
-          ingressClassName: 'nginx',
+          ingressClassName: 'alb', // Tells AWS to take control, not Nginx
           rules: [{
             http: {
               paths: [{
-                path: `/${studentId.toLowerCase()}/gui`, // Clean path
+                path: `/${studentId.toLowerCase()}/gui`,
                 pathType: 'Prefix',
                 backend: {
                   service: { name: 'ros2-service', port: { number: 80 } }
@@ -65,13 +72,9 @@ export class K8sService {
           }]
         }
       };
-      await this.netApi.createNamespacedIngress({ 
-        namespace: namespaceName, 
-        body: ingressManifest 
-      });
-
-      // BLUEPRINT: Pod with strict security and timeouts
-const podManifest: k8s.V1Pod = {
+      await this.netApi.createNamespacedIngress({ namespace: namespaceName, body: ingressManifest });
+      // 3. BLUEPRINT: Pod pointing to AWS ECR
+      const podManifest: k8s.V1Pod = {
         apiVersion: 'v1',
         kind: 'Pod',
         metadata: {
@@ -82,15 +85,41 @@ const podManifest: k8s.V1Pod = {
           activeDeadlineSeconds: 14400,
           containers: [
             {
-              name: 'rviz2-container',
-              image: 'nano-ros:latest',
-              imagePullPolicy: 'IfNotPresent',
+              name: 'security-sidecar',
+              image: 'quay.io/oauth2-proxy/oauth2-proxy:v7.5.1',
+              args: [
+              "--http-address=0.0.0.0:4180",
+              "--upstream=http://127.0.0.1:8080",
               
-              // --- THE FIX: Tell ttyd exactly where it is hosted! ---
+              // 1. THE NEW AUTHORITY: Tell it to expect a JWT
+              "--provider=oidc",
+              "--oidc-issuer-url=https://interdentally-moderne-taunya.ngrok-free.dev/", // Your actual backend URL
+              "--client-id=ros2-lab-platform", // A static ID you define
+              "--client-secret=your-secure-backend-secret", 
+              
+              // 2. THE SEAMLESS UI: Skip the login button page
+              "--skip-provider-button=true",
+              
+              // 3. THE JWT EXTRACTOR: Tell the sidecar where to find the React token
+              "--pass-authorization-header=true",
+              "--set-authorization-header=true",
+              
+              // 4. THE COOKIE ENCRYPTION (Keep this exactly the same)
+              "--cookie-secret=00000000000000000000000000000000",
+              "--email-domain=*"
+            ],
+              ports: [{ containerPort: 4180 }],
+              resources: {
+                requests: { cpu: '100m', memory: '128Mi' }, // Very lightweight
+                limits: { cpu: '200m', memory: '256Mi' },
+              },
+            },
+            {
+              name: 'rviz2-container', // <-- CHANGED: Point to your Tokyo ECR repository! (Insert your 12-digit AWS ID)
+              image: '221131121759.dkr.ecr.ap-northeast-1.amazonaws.com/nano-ros:latest',
+              imagePullPolicy: 'Always', // <-- CHANGED: Force EKS to always pull from AWS
               command: ["ttyd"],
               args: ["-b", `/${studentId.toLowerCase()}/gui`, "-p", "8080", "bash"],
-              // ------------------------------------------------------
-              
               ports: [{ containerPort: 8080 }],
               resources: {
                 requests: { cpu: '500m', memory: '1Gi' },
@@ -105,12 +134,9 @@ const podManifest: k8s.V1Pod = {
         },
       };
 
-      // EXECUTION: Send the command to Kubernetes
       await this.k8sApi.createNamespacedPod({namespace : namespaceName, body : podManifest});
-      this.logger.log(`Successfully launched pod for ${studentId}. Waiting for Nginx routing table to sync...`);
+      this.logger.log(`Successfully launched pod for ${studentId}. Waiting for AWS ELB...`);
 
-      // --- THE RACE CONDITION FIX ---
-      // Force the backend to wait 5 seconds so Nginx has time to open the routing gate
       await new Promise(resolve => setTimeout(resolve, 5000));
 
       return {
@@ -128,8 +154,6 @@ const podManifest: k8s.V1Pod = {
   async terminateStudentLab(studentId: string) {
     const namespaceName = `lab-${studentId.toLowerCase()}`;
     try {
-      // Because we put everything in a Namespace, deleting the Namespace
-      // automatically destroys the Pod, the Volumes, and the Network rules instantly.
       await this.k8sApi.deleteNamespace({name : namespaceName});
       this.logger.log(`Terminated all resources for ${studentId}`);
       return { status: 'terminated' };

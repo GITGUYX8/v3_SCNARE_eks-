@@ -6,6 +6,7 @@ export default function App() {
   // ADD THIS LINE: A simple counter to trigger iframe reloads
   const [terminalKey, setTerminalKey] = useState<number>(0);
   // Hardcoded for testing. Later, this comes from your actual login page!
+  const [token, setToken] = useState<string>('');
   const studentId = 'yash-001'; 
 
   const handleStartLab = async () => {
@@ -13,15 +14,15 @@ export default function App() {
 
     try {
       // 1. Mock Login: Get the unforgeable JWT ID card
-      const loginRes = await fetch('http://localhost:3000/api/auth/login', {
+      const loginRes = await fetch('https://interdentally-moderne-taunya.ngrok-free.dev/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ studentId })
       });
       const { access_token } = await loginRes.json();
-
+      setToken(access_token); 
       // 2. Launch Infrastructure: Pass the JWT in the Authorization header
-      const launchRes = await fetch('http://localhost:3000/api/labs/launch', {
+      const launchRes = await fetch('https://interdentally-moderne-taunya.ngrok-free.dev/api/labs/launch', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${access_token}`
@@ -47,7 +48,7 @@ export default function App() {
   const handleStopLab = async () => {
     // 1. We need the token again to prove we have permission to destroy the lab
     // In a real app, you would save this token in localStorage or a Context provider
-    const loginRes = await fetch('http://localhost:3000/api/auth/login', {
+    const loginRes = await fetch('https://interdentally-moderne-taunya.ngrok-free.dev/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ studentId })
@@ -56,7 +57,7 @@ export default function App() {
 
     try {
       // 2. Fire the DELETE request to your NestJS backend
-      const stopRes = await fetch(`http://localhost:3000/api/labs/stop`, {
+      const stopRes = await fetch(`https://interdentally-moderne-taunya.ngrok-free.dev/api/labs/stop`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${access_token}`
@@ -118,7 +119,7 @@ export default function App() {
           {/* THE MAGIC WINDOW */}
           <iframe 
             key={terminalKey} // <-- ADD THIS LINE: React will remount the iframe when this changes
-            src={`http://localhost${labUrl}/`} 
+            src={`k8s-ros2mastergateway-6e2fe3d7f8-1865910229.ap-northeast-1.elb.amazonaws.com${labUrl}/?access_token=${token}`} 
             width="100%" 
             height="600px" 
             style={{ border: '2px solid #10b981', borderRadius: '8px', marginTop: '10px', backgroundColor: '#fff' }}
