@@ -1,7 +1,7 @@
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
 import { Injectable } from '@nestjs/common';
-
+import { PUBLIC_KEY_PEM } from './auth.keys'; // 1. Import the new key
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor() {
@@ -9,7 +9,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // 1. Tell it to look for the token in the "Authorization: Bearer <token>" header
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false, // 2. Instantly reject expired tokens
-      secretOrKey: 'SUPER_SECRET_DEV_KEY', // IMPORTANT: In production, load this from .env!
+      secretOrKey: PUBLIC_KEY_PEM,
+      algorithms: ['RS256'],
     });
   }
 

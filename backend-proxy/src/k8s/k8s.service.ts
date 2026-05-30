@@ -20,10 +20,11 @@ export class K8sService {
 
     try {
       // 1. ISOLATION: Create a dedicated Namespace
-      await this.k8sApi.createNamespace({
-        body: { metadata: { name: namespaceName } }
-      });
-
+      try {
+        await this.k8sApi.createNamespace({ body: { metadata: { name: namespaceName } } });
+      } catch (err: any) {
+        if (err.response?.statusCode !== 409) throw err;
+      }
       // 2. THE CLOUD HACK: AWS LoadBalancer
       const serviceManifest: k8s.V1Service = {
         apiVersion: 'v1',
@@ -38,10 +39,11 @@ export class K8sService {
           ],
         },
       };
-      await this.k8sApi.createNamespacedService({ 
-        namespace: namespaceName, 
-        body: serviceManifest 
-      });
+      try {
+        await this.k8sApi.createNamespacedService({ namespace: namespaceName, body: serviceManifest });
+      } catch (err: any) {
+        if (err.response?.statusCode !== 409) throw err;
+      }
       // 2. THE AWS ALB INGRESS (The Master Gateway)
       const ingressManifest: k8s.V1Ingress = {
         apiVersion: 'networking.k8s.io/v1',
@@ -72,7 +74,19 @@ export class K8sService {
           }]
         }
       };
-      await this.netApi.createNamespacedIngress({ namespace: namespaceName, body: ingressManifest });
+      try {
+        await this.netApi.createNamespacedIngress({ namespace: namespaceName, body: ingressManifest });
+      } catch (err: any) {
+        if (err.response?.statusCode !== 409) throw err;
+      }
+      
+      // 4. CLEANUP: Delete any existing stale hardware before booting the new one
+      try {
+        await this.k8sApi.deleteNamespacedPod({ name: 'ros2-workspace', namespace: namespaceName });
+        this.logger.log(`Cleaned up previous hardware for ${studentId}`);
+      } catch (err: any) {
+        // We expect a 404 here most times (meaning no old pod exists), so we ignore it
+      }
       // 3. BLUEPRINT: Pod pointing to AWS ECR
       const podManifest: k8s.V1Pod = {
         apiVersion: 'v1',
@@ -93,7 +107,7 @@ export class K8sService {
               
               // 1. THE NEW AUTHORITY: Tell it to expect a JWT
               "--provider=oidc",
-              "--oidc-issuer-url=https://interdentally-moderne-taunya.ngrok-free.dev/", // Your actual backend URL
+              "--oidc-issuer-url=https://interdentally-moderne-taunya.ngrok-free.dev", // Your actual backend URL
               "--client-id=ros2-lab-platform", // A static ID you define
               "--client-secret=your-secure-backend-secret", 
               
@@ -106,7 +120,9 @@ export class K8sService {
               
               // 4. THE COOKIE ENCRYPTION (Keep this exactly the same)
               "--cookie-secret=00000000000000000000000000000000",
-              "--email-domain=*"
+              "--email-domain=*",
+              // Tells the sidecar "Do not redirect. Authenticate using the JWT token instead."
+              "--skip-jwt-bearer-tokens=true",
             ],
               ports: [{ containerPort: 4180 }],
               resources: {
@@ -150,15 +166,20 @@ export class K8sService {
       throw new Error('Infrastructure provisioning failed.');
     }
   }
-
   async terminateStudentLab(studentId: string) {
     const namespaceName = `lab-${studentId.toLowerCase()}`;
     try {
-      await this.k8sApi.deleteNamespace({name : namespaceName});
-      this.logger.log(`Terminated all resources for ${studentId}`);
+      // ONLY delete the Pod. The URL (Ingress) and routing (Service/Namespace) stay alive forever.
+      await this.k8sApi.deleteNamespacedPod({ name: 'ros2-workspace', namespace: namespaceName });
+      this.logger.log(`Hardware destroyed for ${studentId}. Network preserved.`);
       return { status: 'terminated' };
-    } catch (error) {
-      this.logger.error(`Failed to terminate lab for ${studentId}`, error);
+    } catch (error: any) {
+      // If the pod is already gone, don't crash, just report success.
+      if (error.response?.statusCode === 404) {
+        this.logger.log(`Hardware already destroyed for ${studentId}.`);
+        return { status: 'terminated' };
+      }
+      this.logger.error(`Failed to terminate lab for ${studentId}`, error.body || error);
       throw new Error('Cleanup failed.');
     }
   }

@@ -2,7 +2,7 @@ import { Module, Controller, Post, Body } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './jwt.strategy';
-
+import { PRIVATE_KEY } from './auth.keys';
 // --- A Quick Mock Login Controller ---
 @Controller('api/auth')
 export class AuthController {
@@ -23,9 +23,15 @@ export class AuthController {
   imports: [
     PassportModule,
     JwtModule.register({
-      secret: 'SUPER_SECRET_DEV_KEY', // Must match the secret in jwt.strategy.ts
-      signOptions: { expiresIn: '4h' },
-    }),
+    privateKey: PRIVATE_KEY, // Replaces 'secret'
+    signOptions: { 
+      algorithm: 'RS256', // CRITICAL: Switch to Asymmetric Encryption
+      expiresIn: '60m', 
+      issuer: 'https://interdentally-moderne-taunya.ngrok-free.dev', 
+      audience: 'ros2-lab-platform', 
+      keyid: 'ros2-lab-key-001', // Tells AWS which key in the JWKS to use
+    },
+    })
   ],
   controllers: [AuthController],
   providers: [JwtStrategy],

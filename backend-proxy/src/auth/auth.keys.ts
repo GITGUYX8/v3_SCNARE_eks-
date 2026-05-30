@@ -1,17 +1,24 @@
-// auth.keys.ts
-// WARNING: These are for development/lab use only. In production, load these from AWS Secrets Manager.
+import { generateKeyPairSync } from 'crypto';
 
-export const PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDE4R5Q/C4W6x1W
-... (We will use a shortened valid structure for the code block) ...
------END PRIVATE KEY-----`;
+// 1. Generate a true 2048-bit RSA keypair in memory
+const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+});
 
-// This is the mathematical breakdown of the Public Key for the Sidecar
-export const JWKS_PUBLIC_KEY = {
-  kty: 'RSA',
-  alg: 'RS256',
-  use: 'sig',
-  kid: 'ros2-lab-key-001',
-  n: 'xOEeUPwuFusdVjB9Zz2_...', // Modulus
-  e: 'AQAB', // Exponent
+// 2. Export the Private Key for NestJS to sign tokens
+export const PRIVATE_KEY = privateKey.export({ type: 'pkcs1', format: 'pem' });
+// ADD THIS LINE: Export the Public Key as a standard string for NestJS to use internally
+export const PUBLIC_KEY_PEM = publicKey.export({ type: 'spki', format: 'pem' });
+// 3. Export the Public Key directly to JWK format for AWS
+const jwk = publicKey.export({ format: 'jwk' });
+
+export const PUBLIC_JWKS = {
+  keys: [
+    {
+      ...jwk,
+      kid: 'ros2-lab-key-001',
+      use: 'sig',
+      alg: 'RS256' // The magic algorithm AWS demands
+    }
+  ]
 };
