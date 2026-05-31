@@ -1,4 +1,4 @@
-import { Controller, Post, Delete, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Delete, Request, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { K8sService } from './k8s.service';
 
@@ -6,21 +6,32 @@ import { K8sService } from './k8s.service';
 export class K8sController {
   constructor(private readonly k8sService: K8sService) {}
 
-  // This single decorator acts as a concrete wall. 
-  // If the request doesn't have a valid JWT, it throws a 401 Unauthorized automatically.
   @UseGuards(AuthGuard('jwt'))
   @Post('launch')
   async launchLab(@Request() req) {
-    // Because the JWT Strategy validated the token, we don't even need the frontend 
-    // to send the studentId in the body! We extract it directly from the cryptographically secure token.
-    const securedStudentId = req.user.studentId; 
-    return await this.k8sService.provisionStudentLab(securedStudentId);
+    // 1. Debugging: Print exactly what Passport extracted from the token
+    console.log('Intercepted JWT Payload:', req.user);
+
+    // 2. Bulletproof extraction: check all common property names
+    const securedStudentId = req.user?.studentId || req.user?.userId || req.user?.sub;
+
+    if (!securedStudentId) {
+      throw new Error('Fatal: Could not extract Student ID from JWT payload.');
+    }
+
+    const result = await this.k8sService.provisionStudentLab(securedStudentId);
+    return result;
   }
 
   @UseGuards(AuthGuard('jwt'))
   @Delete('stop')
   async stopLab(@Request() req) {
-    const securedStudentId = req.user.studentId;
+    const securedStudentId = req.user?.studentId || req.user?.userId || req.user?.sub;
+    
+    if (!securedStudentId) {
+      throw new Error('Fatal: Could not extract Student ID from JWT payload.');
+    }
+
     return await this.k8sService.terminateStudentLab(securedStudentId);
   }
-}   
+}

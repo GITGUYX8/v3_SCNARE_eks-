@@ -3,17 +3,17 @@ import { useState } from 'react';
 export default function App() {
   const [labState, setLabState] = useState<'IDLE' | 'PROVISIONING' | 'RUNNING'>('IDLE');
   const [labUrl, setLabUrl] = useState<string>('');
-  // ADD THIS LINE: A simple counter to trigger iframe reloads
   const [terminalKey, setTerminalKey] = useState<number>(0);
-  // Hardcoded for testing. Later, this comes from your actual login page!
   const [token, setToken] = useState<string>('');
+  
+  // FIXED: Added missing state declaration for albUrl
+  const [albUrl, setAlbUrl] = useState<string>(''); 
   const studentId = 'yash-001'; 
 
   const handleStartLab = async () => {
     setLabState('PROVISIONING');
 
     try {
-      // 1. Mock Login: Get the unforgeable JWT ID card
       const loginRes = await fetch('https://interdentally-moderne-taunya.ngrok-free.dev/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -21,7 +21,7 @@ export default function App() {
       });
       const { access_token } = await loginRes.json();
       setToken(access_token); 
-      // 2. Launch Infrastructure: Pass the JWT in the Authorization header
+
       const launchRes = await fetch('https://interdentally-moderne-taunya.ngrok-free.dev/api/labs/launch', {
         method: 'POST',
         headers: {
@@ -32,8 +32,10 @@ export default function App() {
       const launchData = await launchRes.json();
 
       if (launchRes.ok) {
-        // Success! Save the path and update the UI
         setLabUrl(launchData.internalPath);
+        if (launchData.albUrl) {
+          setAlbUrl(launchData.albUrl); 
+        }
         setLabState('RUNNING');
       } else {
         alert('Failed to launch: ' + launchData.message);
@@ -45,9 +47,8 @@ export default function App() {
       setLabState('IDLE');
     }
   };
+
   const handleStopLab = async () => {
-    // 1. We need the token again to prove we have permission to destroy the lab
-    // In a real app, you would save this token in localStorage or a Context provider
     const loginRes = await fetch('https://interdentally-moderne-taunya.ngrok-free.dev/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -56,7 +57,6 @@ export default function App() {
     const { access_token } = await loginRes.json();
 
     try {
-      // 2. Fire the DELETE request to your NestJS backend
       const stopRes = await fetch(`https://interdentally-moderne-taunya.ngrok-free.dev/api/labs/stop`, {
         method: 'DELETE',
         headers: {
@@ -65,7 +65,6 @@ export default function App() {
       });
 
       if (stopRes.ok) {
-        // 3. Reset the UI back to the beginning
         setLabUrl('');
         setLabState('IDLE');
         alert('Hardware successfully destroyed.');
@@ -78,6 +77,7 @@ export default function App() {
       alert('Network error connecting to backend.');
     }
   };
+
   return (
     <div style={{ padding: '40px', fontFamily: 'sans-serif', maxWidth: '600px', margin: '0 auto' }}>
       <h1>ROS2 Cloud Labs</h1>
@@ -104,7 +104,6 @@ export default function App() {
           <h3 style={{ color: '#047857' }}>✅ Lab is Live!</h3>
           <p>Your isolated Kubernetes Pod is active.</p>
           
-          {/* NEW: Flexbox container to put the URL and Refresh button side-by-side */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px' }}>
             <p style={{ margin: 0 }}><strong>Path:</strong> {labUrl}</p>
             
@@ -116,10 +115,9 @@ export default function App() {
             </button>
           </div>
           
-          {/* THE MAGIC WINDOW */}
           <iframe 
-            key={terminalKey} // <-- ADD THIS LINE: React will remount the iframe when this changes
-            src={`k8s-ros2mastergateway-6e2fe3d7f8-1865910229.ap-northeast-1.elb.amazonaws.com${labUrl}/?access_token=${token}`} 
+            key={terminalKey} 
+            src={`https://interdentally-moderne-taunya.ngrok-free.dev/cloud-lab${labUrl}?access_token=${token}`}           
             width="100%" 
             height="600px" 
             style={{ border: '2px solid #10b981', borderRadius: '8px', marginTop: '10px', backgroundColor: '#fff' }}

@@ -1,28 +1,41 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-// 1. Import the proxy tool
-import { createProxyMiddleware } from 'http-proxy-middleware'; 
+import { createProxyMiddleware } from 'http-proxy-middleware';
+import { K8sService } from './k8s/k8s.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-
   app.enableCors();
 
-  // 2. THE API GATEWAY REVERSE PROXY
+  const k8sService = app.get(K8sService);
+
   app.use(
     '/cloud-lab',
     createProxyMiddleware({
-      // Replace with your exact AWS ALB URL (No trailing slash)
-      target: 'http://k8s-ros2mastergateway-6e2fe3d7f8-797825877.ap-northeast-1.elb.amazonaws.com',
+      // THE CLOUD HACK: Ask Kubernetes for the live URL dynamically on every connection!
+      router: async () => {
+        const liveUrl = await k8sService.getMasterGatewayUrl();
+        return liveUrl || 'http://localhost:8080';
+      },
       changeOrigin: true,
-      ws: true, // CRITICAL: This allows the ttyd terminal WebSockets to pass through!
+      ws: true,
       pathRewrite: {
-        '^/cloud-lab': '', // Strips '/cloud-lab' from the URL before sending to AWS
+        '^/cloud-lab': '',
       },
       on: {
         proxyReq: (proxyReq, req: any) => {
-          if (req.query?.access_token) {
-            proxyReq.setHeader('Authorization', `Bearer ${req.query.access_token}`);
+          const token = req.query?.access_token;
+          
+          if (token) {
+            // Simply attach the passport, do not mutate the URL path mid-flight
+            proxyReq.setHeader('Authorization', `Bearer ${token}`);
+          }
+        },
+        error: (err, req, res: any) => {
+          console.error('Proxy error:', err.message);
+          if (!res.headersSent) {
+            res.writeHead?.(502, { 'Content-Type': 'application/json' });
+            res.end?.(JSON.stringify({ error: 'Proxy error', message: err.message }));
           }
         },
       },
