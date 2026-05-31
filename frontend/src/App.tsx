@@ -117,7 +117,7 @@ export default function App() {
           
           <iframe 
             key={terminalKey} 
-            src={`https://interdentally-moderne-taunya.ngrok-free.dev/cloud-lab${labUrl}?access_token=${token}`}           
+            src={`https://interdentally-moderne-taunya.ngrok-free.dev${labUrl}/?access_token=${token}`}          
             width="100%" 
             height="600px" 
             style={{ border: '2px solid #10b981', borderRadius: '8px', marginTop: '10px', backgroundColor: '#fff' }}
